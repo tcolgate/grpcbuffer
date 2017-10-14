@@ -1,0 +1,22 @@
+rootcas = [ "cert.pem" ]
+
+[file]
+
+[entryPoints]
+  [entryPoints.https]
+  address = ":8888"
+    [entryPoints.https.tls]
+      [[entryPoints.https.tls.certificates]]
+      certFile = "cert.pem"
+      keyFile = "key.pem"
+
+[frontends]
+  [frontends.frontend1]
+  entrypoints = ["https"]
+  backend = "backend1"
+
+[backends]
+  [backends.backend1]
+    [backends.backend1.servers.server1]
+    url = "https://localhost:443"
+    weight = 10

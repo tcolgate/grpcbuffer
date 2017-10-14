@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package proto;
+
+message Message {
+  uint64 Count = 1;
+  bytes Data = 2;
+}
+
+// TailRequest
+message TailRequest {}
+
+service Test {
+  rpc Tail ( TailRequest) returns (stream Message){}
+}
+
