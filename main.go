@@ -8,17 +8,22 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	pb "github.com/tcolgate/test/grpcbuffer/proto"
+	"github.com/codahale/hdrhistogram"
+	pb "github.com/tcolgate/grpcbuffer/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
 var (
-	client bool
-	server bool
+	client     bool
+	pingClient bool
+	server     bool
+	size       int
 )
 
 func runClient() {
@@ -52,13 +57,64 @@ func runClient() {
 	}
 }
 
+func runPingClient() {
+	wg := &sync.WaitGroup{}
+	vals := make(chan time.Duration)
+	hg := hdrhistogram.New(0, 1000000000, 5)
+
+	go func() {
+		tick := time.NewTicker(1 * time.Second)
+		for {
+			select {
+			case <-tick.C:
+				fmt.Printf("count: %d mean: %s 4*9s: %s stddev: %s\n",
+					hg.TotalCount(),
+					time.Nanosecond*time.Duration(hg.Mean()),
+					time.Nanosecond*time.Duration(hg.ValueAtQuantile(99.99)),
+					time.Nanosecond*time.Duration(hg.StdDev()),
+				)
+			case v := <-vals:
+				hg.RecordValue(int64(v / time.Nanosecond))
+			}
+		}
+	}()
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			creds, err := credentials.NewClientTLSFromFile("cert.pem", "")
+			if err != nil {
+				log.Fatalf("fail to get creds: %v", err)
+			}
+			conn, err := grpc.Dial("localhost:8888", grpc.WithTransportCredentials(creds))
+			if err != nil {
+				log.Fatalf("fail to dial: %v", err)
+			}
+			defer conn.Close()
+			client := pb.NewTestClient(conn)
+			for {
+				n := time.Now()
+				_, err := client.Ping(context.Background(), &pb.PingRequest{})
+				if err != nil {
+					log.Fatalf("err in Tail call, %v", err)
+				}
+				d := time.Since(n)
+				vals <- d
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 type testImp struct{}
+
+var pingCount uint64
 
 func (t *testImp) Tail(tr *pb.TailRequest, s pb.Test_TailServer) error {
 	ctx := s.Context()
 
 	i := 0
-	data := make([]byte, 4096)
+	data := make([]byte, size)
 Loop:
 	for {
 		select {
@@ -97,14 +153,24 @@ func runServer() {
 
 }
 
+func (t *testImp) Ping(ctx context.Context, tr *pb.PingRequest) (*pb.Message, error) {
+	return &pb.Message{
+		Count: atomic.AddUint64(&pingCount, 1),
+	}, nil
+}
+
 func main() {
 	flag.BoolVar(&client, "c", false, "run client")
+	flag.BoolVar(&pingClient, "C", false, "run ping client")
 	flag.BoolVar(&server, "s", false, "run server")
+	flag.IntVar(&size, "z", 512, "padding size")
 	flag.Parse()
 
 	switch {
 	case client:
 		runClient()
+	case pingClient:
+		runPingClient()
 	case server:
 		runServer()
 	}

@@ -10,7 +10,11 @@ message Message {
 // TailRequest
 message TailRequest {}
 
+// PingRequest
+message PingRequest {}
+
 service Test {
   rpc Tail ( TailRequest) returns (stream Message){}
+  rpc Ping ( PingRequest) returns (Message){}
 }
 
